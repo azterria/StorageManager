@@ -1,8 +1,11 @@
 import datetime
+import logging
 import pathlib
 import sqlite3
 
 import src.parser
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -51,6 +54,7 @@ class Index:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        logger.info("Index opened at %s", db_path)
 
     def upsert_event(
         self,

@@ -1,5 +1,8 @@
 import dataclasses
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 # Event tokens as they literally appear in PlaneTracker directory names. Longer/more
 # specific tokens are listed first only for readability — regex alternation here is
@@ -85,6 +88,7 @@ def parse(dir_name: str, parent_date: str | None = None) -> ParsedEvent:
             classified=True,
         )
 
+    logger.warning("Unclassified directory name: %s", dir_name)
     return ParsedEvent(
         registration=None,
         event="unclassified",

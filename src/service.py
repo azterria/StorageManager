@@ -182,9 +182,11 @@ def _resolve_event_dir(row: dict) -> pathlib.Path:
 def get_video(event_id: int):
     row = _index.get_event(event_id)
     if row is None:
+        logger.warning("Video requested for unknown event id=%s", event_id)
         raise fastapi.HTTPException(404, "Event not found")
     candidates = sorted(_resolve_event_dir(row).glob("*_recording.mp4"))
     if not candidates:
+        logger.warning("No recording available for event id=%s", event_id)
         raise fastapi.HTTPException(404, "No recording available for this event")
     return fastapi.responses.FileResponse(candidates[0], media_type="video/mp4")
 
@@ -193,6 +195,7 @@ def get_video(event_id: int):
 def get_thumbnail(event_id: int):
     row = _index.get_event(event_id)
     if row is None:
+        logger.warning("Thumbnail requested for unknown event id=%s", event_id)
         raise fastapi.HTTPException(404, "Event not found")
     cache_path = _thumbnail_cache_dir / f"{event_id}.jpg"
     try:
@@ -200,12 +203,14 @@ def get_thumbnail(event_id: int):
     except FileNotFoundError as exc:
         raise fastapi.HTTPException(404, "No recording available to generate a thumbnail") from exc
     except RuntimeError as exc:
+        logger.exception("Thumbnail generation failed for event id=%s", event_id)
         raise fastapi.HTTPException(500, str(exc)) from exc
     return fastapi.responses.FileResponse(thumbnail_path, media_type="image/jpeg")
 
 
 @app.post("/maintenance_cycle", response_model=src.models.MaintenanceCycleResponse)
 def maintenance_cycle():
+    logger.info("Maintenance cycle triggered via API")
     result = src.archive.run_maintenance_cycle(
         _index,
         _filespace_root,

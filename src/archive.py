@@ -85,6 +85,7 @@ def archive_event(row: dict, archive_root: pathlib.Path, crf: int = DEFAULT_CRF)
     shutil.move(str(tmp_dest), str(dest_dir))
 
     shutil.rmtree(src_dir)
+    logger.info("Archived event id=%s path=%s -> %s", row["id"], src_dir, dest_dir)
     return str(dest_dir)
 
 
@@ -101,6 +102,7 @@ def run_maintenance_cycle(
     failure on one event is logged and skipped, leaving it eligible for the next
     call rather than aborting the whole batch."""
     candidates = select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size)
+    logger.info("Maintenance cycle starting: %d candidate(s)", len(candidates))
 
     processed = 0
     for row in candidates:
@@ -113,5 +115,8 @@ def run_maintenance_cycle(
 
     remaining = len(
         select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size=1_000_000)
+    )
+    logger.info(
+        "Maintenance cycle complete: processed=%d remaining=%d", processed, remaining
     )
     return {"status": "ok", "processed": processed, "remaining": remaining}
