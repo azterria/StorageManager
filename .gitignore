@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+data/
+.idea/
+
+# Sample PlaneTracker event data used for local verification, not part of the repo.
+/N6884H_touch_and_go_24_20260724_183304/
