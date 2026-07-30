@@ -133,33 +133,75 @@ def status(response: fastapi.Response):
     )
 
 
+_TIME_FIELDS = ("year", "month", "day", "hour", "minute", "second")
+
+
+def _build_timestamp_prefix(year: int, month: int | None, day: int | None,
+                             hour: int | None, minute: int | None, second: int | None) -> str:
+    prefix = f"{year:04d}"
+    if month is None:
+        return prefix
+    prefix += f"-{month:02d}"
+    if day is None:
+        return prefix
+    prefix += f"-{day:02d}"
+    if hour is None:
+        return prefix
+    prefix += f"T{hour:02d}"
+    if minute is None:
+        return prefix
+    prefix += f":{minute:02d}"
+    if second is None:
+        return prefix
+    return prefix + f":{second:02d}"
+
+
 @app.get("/events", response_model=src.models.EventList)
 def list_events(
     registration: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
-    at: str | None = None,
+    year: int | None = None,
+    month: int | None = fastapi.Query(None, ge=1, le=12),
+    day: int | None = fastapi.Query(None, ge=1, le=31),
+    hour: int | None = fastapi.Query(None, ge=0, le=23),
+    minute: int | None = fastapi.Query(None, ge=0, le=59),
+    second: int | None = fastapi.Query(None, ge=0, le=59),
     window_seconds: int | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
-    if at is not None:
-        if since is not None or until is not None:
+    values = (year, month, day, hour, minute, second)
+    given = [v is not None for v in values]
+    if any(given):
+        depth = max(i for i, g in enumerate(given) if g)
+        if not all(given[: depth + 1]):
+            missing = _TIME_FIELDS[next(i for i, g in enumerate(given) if not g)]
             raise fastapi.HTTPException(
-                400, "Use either 'at' + 'window_seconds' or 'since'/'until', not both"
+                400, f"Missing '{missing}': time fields must be given from 'year' downward with no gaps"
             )
-        if window_seconds is None:
-            raise fastapi.HTTPException(400, "'window_seconds' is required when 'at' is given")
-        try:
-            at_dt = datetime.datetime.fromisoformat(at)
-        except ValueError as exc:
-            raise fastapi.HTTPException(400, f"Invalid 'at' timestamp: {at}") from exc
-        delta = datetime.timedelta(seconds=window_seconds)
-        since = (at_dt - delta).isoformat()
-        until = (at_dt + delta).isoformat()
+
+    if window_seconds is not None and second is None:
+        raise fastapi.HTTPException(400, "'window_seconds' requires 'second' to be given")
+
+    since = until = timestamp_prefix = None
+    if year is not None:
+        if second is not None and window_seconds is not None:
+            try:
+                at_dt = datetime.datetime(year, month, day, hour, minute, second)
+            except ValueError as exc:
+                raise fastapi.HTTPException(400, f"Invalid timestamp: {exc}") from exc
+            delta = datetime.timedelta(seconds=window_seconds)
+            since = (at_dt - delta).isoformat()
+            until = (at_dt + delta).isoformat()
+        else:
+            timestamp_prefix = _build_timestamp_prefix(year, month, day, hour, minute, second)
 
     rows, total = _index.query_events(
-        registration=registration, since=since, until=until, limit=limit, offset=offset
+        registration=registration,
+        since=since,
+        until=until,
+        timestamp_prefix=timestamp_prefix,
+        limit=limit,
+        offset=offset,
     )
     return src.models.EventList(
         events=[_row_to_summary(r) for r in rows], total=total, limit=limit, offset=offset

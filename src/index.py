@@ -119,6 +119,7 @@ class Index:
         registration: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        timestamp_prefix: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict], int]:
@@ -133,6 +134,9 @@ class Index:
         if until:
             clauses.append("timestamp <= ?")
             params.append(until)
+        if timestamp_prefix:
+            clauses.append("timestamp LIKE ?")
+            params.append(f"{timestamp_prefix}%")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
         total = self._conn.execute(

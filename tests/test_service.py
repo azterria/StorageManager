@@ -53,34 +53,39 @@ def test_events_filtering_by_registration_and_time_window(configured_env):
         assert body["total"] == 1
         assert body["events"][0]["registration"] == "N123AB"
 
-        by_window = client.get(
-            "/events", params={"since": "2026-05-01T00:00:00", "until": "2026-12-31T00:00:00"}
-        )
-        body = by_window.json()
+        by_month = client.get("/events", params={"year": 2026, "month": 6})
+        body = by_month.json()
         assert body["total"] == 1
         assert body["events"][0]["registration"] == "N999ZZ"
 
-        by_at = client.get(
+        by_year = client.get("/events", params={"year": 2026})
+        body = by_year.json()
+        assert body["total"] == 2
+
+        by_exact_with_window = client.get(
             "/events",
-            params={"at": "2026-06-01T12:00:00", "window_seconds": 60},
+            params={
+                "year": 2026, "month": 6, "day": 1, "hour": 12, "minute": 0, "second": 0,
+                "window_seconds": 60,
+            },
         )
-        body = by_at.json()
+        body = by_exact_with_window.json()
         assert body["total"] == 1
         assert body["events"][0]["registration"] == "N999ZZ"
 
 
-def test_events_at_requires_window_seconds(configured_env):
-    with TestClient(src.service.app) as client:
-        resp = client.get("/events", params={"at": "2026-06-01T12:00:00"})
-        assert resp.status_code == 400
-
-
-def test_events_at_conflicts_with_since(configured_env):
+def test_events_window_seconds_requires_second(configured_env):
     with TestClient(src.service.app) as client:
         resp = client.get(
             "/events",
-            params={"at": "2026-06-01T12:00:00", "window_seconds": 60, "since": "2026-01-01T00:00:00"},
+            params={"year": 2026, "month": 6, "day": 1, "hour": 12, "minute": 0, "window_seconds": 60},
         )
+        assert resp.status_code == 400
+
+
+def test_events_time_fields_reject_gaps(configured_env):
+    with TestClient(src.service.app) as client:
+        resp = client.get("/events", params={"year": 2026, "day": 1})
         assert resp.status_code == 400
 
 
