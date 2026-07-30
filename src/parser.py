@@ -36,6 +36,10 @@ _BARE_LITERALS = frozenset({"runway_test", "calibration", "stream_reconnect"})
 # "home_watch_..."), so normalize the bare "home" token to the EventType value.
 _EVENT_NORMALIZE = {"home": "home_watch"}
 
+# Names already warned about as unclassified, so repeated scans don't re-log the same
+# name every cycle. Cleared only by process restart.
+_WARNED_UNCLASSIFIED: set[str] = set()
+
 
 @dataclasses.dataclass(frozen=True)
 class ParsedEvent:
@@ -88,7 +92,9 @@ def parse(dir_name: str, parent_date: str | None = None) -> ParsedEvent:
             classified=True,
         )
 
-    logger.warning("Unclassified directory name: %s", dir_name)
+    if dir_name not in _WARNED_UNCLASSIFIED:
+        _WARNED_UNCLASSIFIED.add(dir_name)
+        logger.warning("Unclassified directory name: %s", dir_name)
     return ParsedEvent(
         registration=None,
         event="unclassified",
