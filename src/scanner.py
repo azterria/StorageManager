@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import os
 import pathlib
 import re
 
@@ -17,6 +18,35 @@ _DATE_DIR_RE = re.compile(r"^\d{8}$")
 # when an already-created file has bytes appended to it.
 _COMPLETE_MARKER_NAME = "complete"
 
+# If a directory's mtime has been quiet this long with no tracker-written `complete`
+# marker, we self-declare it complete rather than leave it stuck in 'indexing' forever.
+# Covers events written before the marker convention existed, and trackers that crashed
+# without ever writing one. Deliberately much larger than any realistic settle_seconds
+# so we're confident the tracker isn't just still working on it.
+_STALE_EVENT_AGE_SECONDS = 86400
+
+
+def _maybe_declare_stale_complete(
+    entry: pathlib.Path, st: os.stat_result, now_ts: float
+) -> os.stat_result | None:
+    """Write the `complete` marker ourselves if `entry` is stale with no tracker marker.
+
+    Returns the post-write stat result if a marker was written, else None. Only called
+    when no marker exists yet, so this never overwrites a tracker-written one.
+    """
+    age = now_ts - st.st_mtime
+    if age < _STALE_EVENT_AGE_SECONDS:
+        return None
+    try:
+        (entry / _COMPLETE_MARKER_NAME).write_text(
+            f"declared complete by storage_manager: no tracker marker after {age:.0f}s "
+            "of mtime inactivity\n"
+        )
+        return entry.stat()
+    except OSError:
+        logger.exception("Failed to write stale-complete marker for %s", entry)
+        return None
+
 
 def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float) -> dict:
     """Walk `{root}/{yyyymmdd}/*` once, upserting each run directory by (dev, ino).
@@ -28,6 +58,13 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
     (belt-and-suspenders against a marker written just before a crash mid-copy), not
     the primary signal. Renamed directories are picked up because the lookup key is
     the inode, not the path.
+
+    If no marker is present and the directory has been quiet for
+    `_STALE_EVENT_AGE_SECONDS`, we write the marker ourselves (see
+    `_maybe_declare_stale_complete`) so the directory can settle on a later scan. That
+    write bumps the directory's own mtime, so it still goes through the normal
+    settle_seconds wait afterward rather than settling in this same scan — same
+    lifecycle as a tracker-written marker, just self-authored.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     now_ts = now.timestamp()
@@ -55,10 +92,13 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
                 continue
 
             summary["seen"] += 1
-            is_settled = (
-                (entry / _COMPLETE_MARKER_NAME).exists()
-                and (now_ts - st.st_mtime) >= settle_seconds
-            )
+            has_marker = (entry / _COMPLETE_MARKER_NAME).exists()
+            if not has_marker:
+                restat = _maybe_declare_stale_complete(entry, st, now_ts)
+                if restat is not None:
+                    st, has_marker = restat, True
+
+            is_settled = has_marker and (now_ts - st.st_mtime) >= settle_seconds
             summary["settled" if is_settled else "unsettled"] += 1
 
             parsed = src.parser.parse(entry.name, parent_date=date_dir.name)

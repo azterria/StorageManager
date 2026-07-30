@@ -37,6 +37,20 @@ match that style rather than leaving the reasoning implicit.
   `complete` as its last write, or events never settle. If events start
   piling up stuck in `indexing` after a tracker change, check that first.
 
+- **Events from before the `complete` marker existed stuck in `indexing`
+  forever.** Same two-sided contract as above, but for old data: directories
+  written before the marker convention (or by a tracker that crashed before
+  writing one) have no marker to wait for. `scan_once` now self-declares
+  completion (`_maybe_declare_stale_complete`) once a directory's mtime has
+  been quiet for `_STALE_EVENT_AGE_SECONDS` (1 day, hardcoded) with no
+  marker present — it writes `complete` itself, with a note in the file
+  distinguishing it from a tracker-written one. That write bumps the
+  directory's mtime, so the directory still goes through one more
+  `settle_seconds` wait afterward on a later scan rather than settling in
+  the same pass — deliberately the same lifecycle as a real marker, to avoid
+  a directory flipping to `local` and back to `indexing` once the write's
+  own mtime bump is observed.
+
 ## Design tensions worth remembering
 
 - `dev`/`ino` as the identity key only works within one filesystem. If
