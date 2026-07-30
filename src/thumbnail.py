@@ -26,14 +26,15 @@ def _find_video(event_dir: pathlib.Path) -> pathlib.Path:
 
 
 def _select_best_frame(event_dir: pathlib.Path) -> int:
-    """Pick the frame with the highest-confidence accepted detection.
+    """Pick the last frame (by elapsed_ms) with an accepted detection.
 
     Falls back to the highest-confidence detection of any kind, then to the first
     frame of the video (elapsed_ms=0) if there are no usable detection records at all.
     """
     path = event_dir.joinpath("detections.jsonl")
-    best_score: tuple[bool, float] | None = None
-    best_stem: str | None = None
+    last_accepted_ms: int | None = None
+    best_fallback_score: float | None = None
+    best_fallback_stem: str | None = None
     if path.exists():
         with path.open() as f:
             for line in f:
@@ -48,13 +49,18 @@ def _select_best_frame(event_dir: pathlib.Path) -> int:
                 accepted_mask = record.get("accepted_mask", [])
                 for i, confidence in enumerate(confidences):
                     accepted = bool(accepted_mask[i]) if i < len(accepted_mask) else False
-                    score = (accepted, float(confidence))
-                    if best_score is None or score > best_score:
-                        best_score = score
-                        best_stem = stem
-    if best_stem is None:
+                    if accepted:
+                        elapsed_ms = _elapsed_ms_from_stem(stem)
+                        if last_accepted_ms is None or elapsed_ms > last_accepted_ms:
+                            last_accepted_ms = elapsed_ms
+                    if best_fallback_score is None or float(confidence) > best_fallback_score:
+                        best_fallback_score = float(confidence)
+                        best_fallback_stem = stem
+    if last_accepted_ms is not None:
+        return last_accepted_ms
+    if best_fallback_stem is None:
         return 0
-    return _elapsed_ms_from_stem(best_stem)
+    return _elapsed_ms_from_stem(best_fallback_stem)
 
 
 def get_or_create_thumbnail(event_dir: pathlib.Path, cache_path: pathlib.Path) -> pathlib.Path:
