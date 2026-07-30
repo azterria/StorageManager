@@ -8,42 +8,34 @@ unusually good about explaining *why* (dev/ino keying, non-cancelling
 shutdown, archived-never-downgrades, atomic archive move) — if I add code,
 match that style rather than leaving the reasoning implicit.
 
-## Things that look like bugs but I haven't confirmed are
+## Resolved (2026-07-30)
 
-- **Events without a `timestamp` may be unarchivable forever.**
-  `local_events_older_than` and `oldest_local_events` (src/index.py) both
-  filter on `timestamp IS NOT NULL`. `timestamp` is only set when *both*
-  parsed date and time exist (`_to_timestamp`). Bare-literal run kinds
-  (`runway_test`, `calibration`, `stream_reconnect`) get a date but no time,
-  so their timestamp is always `None`. Unclassified directories are the same.
-  That means these never get selected as archive candidates, not even under
-  disk pressure — they'd sit in `local` status and consume filespace
-  indefinitely. Worth checking whether this is intentional (maybe these
-  directories are expected to be tiny/rare) before treating it as a bug.
+- **Timestampless events (`runway_test`, `calibration`, `stream_reconnect`,
+  `unclassified`) being unarchivable forever.** Confirmed with Matthew: in
+  production these always land in a dated directory with a real timestamp —
+  the no-timestamp path shouldn't actually occur for the kinds we care
+  about. Rather than change archive eligibility, `/status` now reports
+  `unclassified_count` (see `Index.count_unclassified`) so an unexpected
+  buildup is visible instead of silent. If this count is ever nonzero and
+  growing, that's the signal something upstream changed.
 
-- **No locking around the shared SQLite connection.** `Index` opens one
-  connection with `check_same_thread=False` and hands it to both the
-  periodic scanner (via `asyncio.to_thread`) and every sync FastAPI endpoint
-  (which uvicorn/Starlette also runs in a threadpool). Python's `sqlite3`
-  doesn't serialize access across threads on your behalf just because the
-  thread-check is disabled — concurrent `execute()` calls from different
-  threads on the same connection is asking for trouble (this is why the SQLite
-  docs steer people toward one-connection-per-thread, or an explicit lock).
-  It's probably fine in practice because SQLite operations here are short and
-  requests are low-frequency, but if `/maintenance_cycle` is ever called
-  concurrently with itself or during a scan, this is the first place I'd look
-  for a flaky failure.
+- **No locking around the shared SQLite connection.** Deliberately left
+  alone: deployments are single-consumer and idle ~90% of the time, so the
+  actual risk of concurrent writes colliding is low. Revisit only if a
+  second consumer is ever added per deployment, or if `/maintenance_cycle`
+  starts being called on a tight schedule.
 
-- **Directory mtime settling assumes new entries, not just data writes.**
-  `scan_once` uses the *directory's* mtime to decide "settled." A directory's
-  mtime updates when entries are added/removed/renamed inside it, not when an
-  existing file's contents are appended to. If PlaneTracker ever opens
-  `*_recording.mp4` once and streams writes into it without touching the
-  directory entry list again, `EVENT_SETTLE_SECONDS` could elapse while the
-  video is still being written, and the event would look "local"
-  (archive-eligible) while incomplete. I don't know PlaneTracker's write
-  pattern well enough to say if this is real — flag it if archived videos
-  ever turn up truncated.
+- **Directory mtime settling assumed new entries, not just data writes.**
+  Confirmed: PlaneTracker writes `*_recording.mp4` last, as a re-encode of
+  raw output after the event finishes — so appending to an open file
+  without touching the directory entry list was a real risk. Fixed by
+  requiring a tracker-written `complete` marker file in the event directory
+  *in addition to* the mtime-quiet check (`scanner.py`,
+  `_COMPLETE_MARKER_NAME`). The mtime check stays as a safety margin after
+  the marker appears, in case a marker gets written just before a crash
+  mid-copy. This is a two-sided contract: the tracker must actually create
+  `complete` as its last write, or events never settle. If events start
+  piling up stuck in `indexing` after a tracker change, check that first.
 
 ## Design tensions worth remembering
 

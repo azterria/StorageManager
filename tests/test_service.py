@@ -40,6 +40,19 @@ def test_health_and_status_ready(configured_env):
         assert body["status"] == "ok"
         assert body["index_size"] == 0
         assert body["last_scan_time"] is not None
+        assert body["unclassified_count"] == 0
+
+
+def test_status_reports_unclassified_count(configured_env):
+    filespace = configured_env["filespace"]
+    now = time.time()
+    _make_event_dir(filespace, "20260101", "N123AB_landing_24_20260101_010203", now - 1000)
+    _make_event_dir(filespace, "20260101", "some_weird_name", now - 1000)
+
+    with TestClient(src.service.app) as client:
+        body = client.get("/status").json()
+        assert body["index_size"] == 2
+        assert body["unclassified_count"] == 1
 
 
 def test_events_filtering_by_registration_and_time_window(configured_env):

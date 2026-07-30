@@ -111,6 +111,18 @@ def test_count_by_status(idx):
     assert counts == {"local": 1, "indexing": 1}
 
 
+def test_count_unclassified(idx):
+    idx.upsert_event(dev=1, ino=1, path="/a", dir_name="a", parsed=_parsed(), mtime=1.0, status="local")
+    idx.upsert_event(
+        dev=1, ino=2, path="/b", dir_name="b",
+        parsed=src.parser.ParsedEvent(
+            registration=None, event="unclassified", runway=None, date=None, time=None, classified=False,
+        ),
+        mtime=1.0, status="local",
+    )
+    assert idx.count_unclassified() == 1
+
+
 def test_meta_roundtrip(idx):
     assert idx.get_meta("last_scan_time") is None
     idx.set_meta("last_scan_time", "2026-07-29T00:00:00+00:00")

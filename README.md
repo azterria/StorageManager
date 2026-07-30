@@ -31,7 +31,8 @@ free up local storage.
 ## API
 
 - `GET /health` — liveness/readiness probe.
-- `GET /status` — index size, last scan time, archive backlog.
+- `GET /status` — index size, last scan time, archive backlog, count of
+  unclassified events.
 - `GET /events` — list events, filterable by `registration` and by time
   fields (`year`, `month`, `day`, `hour`, `minute`, `second`, given from
   `year` downward with no gaps), optionally widened with `window_seconds`

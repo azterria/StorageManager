@@ -24,6 +24,7 @@ class StatusResponse(pydantic.BaseModel):
     index_size: int
     last_scan_time: str | None
     archive_backlog: int
+    unclassified_count: int
 
 
 class MaintenanceCycleResponse(pydantic.BaseModel):

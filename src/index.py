@@ -184,6 +184,11 @@ class Index:
         ).fetchall()
         return {r["status"]: r["n"] for r in rows}
 
+    def count_unclassified(self) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE classified = 0"
+        ).fetchone()[0]
+
     def set_archived(self, event_id: int, archive_path: str, now: datetime.datetime | None = None) -> None:
         now_iso = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat()
         self._conn.execute(

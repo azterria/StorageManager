@@ -122,7 +122,8 @@ def status(response: fastapi.Response):
     if not _ready:
         response.status_code = 503
         return src.models.StatusResponse(
-            status="starting", index_size=0, last_scan_time=None, archive_backlog=0
+            status="starting", index_size=0, last_scan_time=None, archive_backlog=0,
+            unclassified_count=0,
         )
     counts = _index.count_by_status()
     return src.models.StatusResponse(
@@ -130,6 +131,7 @@ def status(response: fastapi.Response):
         index_size=sum(counts.values()),
         last_scan_time=_index.get_meta("last_scan_time"),
         archive_backlog=counts.get("local", 0),
+        unclassified_count=_index.count_unclassified(),
     )
 
 
