@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import pathlib
+import shutil
 
 import fastapi
 import fastapi.responses
@@ -53,6 +54,24 @@ def _load_config() -> None:
     _thumbnail_cache_dir = index_db_path.parent / "thumbnails"
 
 
+def _maybe_fresh_start() -> None:
+    """If FRESH_START=1, wipe the index DB and thumbnail cache before anything
+    opens them, so the service starts as if from a clean deploy. Must run after
+    _load_config() (needs _thumbnail_cache_dir) and before src.index.Index() opens
+    the DB file."""
+    if os.getenv("FRESH_START") != "1":
+        return
+
+    index_db_path = pathlib.Path(os.getenv("INDEX_DB_PATH", "data/index/storage_manager.db"))
+    if index_db_path.exists():
+        index_db_path.unlink()
+        logger.info("FRESH_START: deleted index DB at %s", index_db_path)
+
+    if _thumbnail_cache_dir.exists():
+        shutil.rmtree(_thumbnail_cache_dir)
+        logger.info("FRESH_START: deleted thumbnail cache at %s", _thumbnail_cache_dir)
+
+
 def _event_settle_seconds() -> float:
     return float(os.getenv("EVENT_SETTLE_SECONDS", "120"))
 
@@ -66,6 +85,7 @@ async def _lifespan(app: fastapi.FastAPI):
     global _index, _ready, _scan_task, _scan_stop_event
 
     _load_config()
+    _maybe_fresh_start()
     index_db_path = os.getenv("INDEX_DB_PATH", "data/index/storage_manager.db")
     db_existed = pathlib.Path(index_db_path).exists()
     _index = src.index.Index(index_db_path)

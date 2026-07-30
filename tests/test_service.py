@@ -153,6 +153,36 @@ def test_video_and_thumbnail_roundtrip(configured_env):
         assert thumb_resp.headers["content-type"] == "image/jpeg"
 
 
+def test_fresh_start_wipes_db_and_thumbnail_cache(configured_env, monkeypatch):
+    filespace = configured_env["filespace"]
+    _make_event_dir(
+        filespace, "20260101", "landing_24_20260101_010203", time.time() - 1000,
+        with_video=True, with_detections=True,
+    )
+
+    with TestClient(src.service.app) as client:
+        event_id = client.get("/events").json()["events"][0]["id"]
+        assert client.get(f"/events/{event_id}/thumbnail").status_code == 200
+
+    index_db_path = os.environ["INDEX_DB_PATH"]
+    thumbnail_cache_dir = os.path.dirname(index_db_path) + "/thumbnails"
+    assert os.path.exists(index_db_path)
+    assert os.path.exists(thumbnail_cache_dir)
+
+    monkeypatch.setenv("FRESH_START", "1")
+    with TestClient(src.service.app):
+        pass
+
+    assert not os.path.exists(thumbnail_cache_dir)
+
+    monkeypatch.delenv("FRESH_START")
+    with TestClient(src.service.app) as client:
+        # DB was wiped, so this is rebuilt from the still-present filespace data
+        # rather than being empty.
+        status = client.get("/status").json()
+        assert status["index_size"] == 1
+
+
 def test_video_404_when_no_recording(configured_env):
     filespace = configured_env["filespace"]
     _make_event_dir(filespace, "20260101", "landing_24_20260101_010203", time.time() - 1000)
