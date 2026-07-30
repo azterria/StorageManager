@@ -11,14 +11,23 @@ logger = logging.getLogger(__name__)
 
 _DATE_DIR_RE = re.compile(r"^\d{8}$")
 
+# Written by the tracker once an event directory's final output (the re-encoded
+# recording) has landed. Required for settling in addition to the mtime check below,
+# since a directory's mtime only moves when entries are added/removed/renamed — not
+# when an already-created file has bytes appended to it.
+_COMPLETE_MARKER_NAME = "complete"
+
 
 def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float) -> dict:
     """Walk `{root}/{yyyymmdd}/*` once, upserting each run directory by (dev, ino).
 
-    A directory is "settled" (status='local') once its mtime hasn't moved for
-    `settle_seconds` — otherwise it's still being written to (status='indexing') and
-    excluded from archive candidacy. Renamed directories are picked up because the
-    lookup key is the inode, not the path.
+    A directory is "settled" (status='local') once the tracker's `complete` marker
+    file is present *and* the directory's mtime hasn't moved for `settle_seconds` —
+    otherwise it's still being written to (status='indexing') and excluded from
+    archive candidacy. The mtime check is a safety margin after the marker appears
+    (belt-and-suspenders against a marker written just before a crash mid-copy), not
+    the primary signal. Renamed directories are picked up because the lookup key is
+    the inode, not the path.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     now_ts = now.timestamp()
@@ -46,7 +55,10 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
                 continue
 
             summary["seen"] += 1
-            is_settled = (now_ts - st.st_mtime) >= settle_seconds
+            is_settled = (
+                (entry / _COMPLETE_MARKER_NAME).exists()
+                and (now_ts - st.st_mtime) >= settle_seconds
+            )
             summary["settled" if is_settled else "unsettled"] += 1
 
             parsed = src.parser.parse(entry.name, parent_date=date_dir.name)

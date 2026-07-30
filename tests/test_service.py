@@ -9,9 +9,11 @@ import src.archive
 import src.service
 
 
-def _make_event_dir(filespace, date, name, mtime, with_video=False, with_detections=False):
+def _make_event_dir(filespace, date, name, mtime, with_video=False, with_detections=False, complete=True):
     event_dir = filespace / date / name
     event_dir.mkdir(parents=True)
+    if complete:
+        (event_dir / "complete").touch()
     if with_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(event_dir / "cam_recording.mp4"), fourcc, 5, (32, 24))

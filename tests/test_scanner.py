@@ -14,9 +14,11 @@ def idx(tmp_path):
     index.close()
 
 
-def _make_event_dir(root, date, name, mtime=None):
+def _make_event_dir(root, date, name, mtime=None, complete=True):
     event_dir = root / date / name
     event_dir.mkdir(parents=True)
+    if complete:
+        (event_dir / "complete").touch()
     if mtime is not None:
         os.utime(event_dir, (mtime, mtime))
     return event_dir
@@ -39,6 +41,20 @@ def test_scan_finds_and_classifies_settled_event(tmp_path, idx):
 def test_scan_marks_recent_dir_as_indexing(tmp_path, idx):
     root = tmp_path / "filespace"
     _make_event_dir(root, "20260724", "N123AB_landing_24_20260724_183304", mtime=time.time())
+
+    summary = src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    assert summary == {"seen": 1, "settled": 0, "unsettled": 1}
+    results, _ = idx.query_events()
+    assert results[0]["status"] == "indexing"
+
+
+def test_scan_marks_dir_without_complete_marker_as_indexing(tmp_path, idx):
+    root = tmp_path / "filespace"
+    _make_event_dir(
+        root, "20260724", "N123AB_landing_24_20260724_183304",
+        mtime=time.time() - 1000, complete=False,
+    )
 
     summary = src.scanner.scan_once(root, idx, settle_seconds=120)
 

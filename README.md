@@ -11,8 +11,9 @@ free up local storage.
 - **Scanner** (`src/scanner.py`) walks `{FILESPACE_ROOT}/{yyyymmdd}/*` on a
   timer, upserting each run directory into the index keyed by `(dev, ino)`
   so renames don't create duplicates. A directory is "settled" (`local`)
-  once its mtime hasn't moved for `EVENT_SETTLE_SECONDS`; otherwise it's
-  still being written (`indexing`) and excluded from archiving.
+  once the tracker's `complete` marker file is present *and* its mtime
+  hasn't moved for `EVENT_SETTLE_SECONDS`; otherwise it's still being
+  written (`indexing`) and excluded from archiving.
 - **Parser** (`src/parser.py`) extracts registration, event type, runway,
   and timestamp from PlaneTracker's directory naming convention. Names it
   doesn't recognize are kept as `unclassified` rather than rejected.
