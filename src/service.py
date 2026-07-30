@@ -67,13 +67,20 @@ async def _lifespan(app: fastapi.FastAPI):
 
     _load_config()
     index_db_path = os.getenv("INDEX_DB_PATH", "data/index/storage_manager.db")
+    db_existed = pathlib.Path(index_db_path).exists()
     _index = src.index.Index(index_db_path)
 
     settle_seconds = _event_settle_seconds()
-    # Run one synchronous scan up front so /health can become ready without waiting
-    # a full scan interval.
-    await asyncio.to_thread(src.scanner.scan_once, _filespace_root, _index, settle_seconds)
-    _ready = True
+    if db_existed:
+        # DB already has data to serve; let the periodic scan loop (which scans
+        # immediately on its first iteration) catch up in the background instead
+        # of blocking /health on a full scan.
+        _ready = True
+    else:
+        # No DB to fall back on yet, so /health must wait for a full scan before
+        # there's anything to report.
+        await asyncio.to_thread(src.scanner.scan_once, _filespace_root, _index, settle_seconds)
+        _ready = True
 
     _scan_stop_event = asyncio.Event()
     _scan_task = asyncio.create_task(
