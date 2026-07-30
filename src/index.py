@@ -110,6 +110,16 @@ class Index:
         self._conn.commit()
         return row_id
 
+    def get_known_states(self) -> dict[tuple[int, int], dict]:
+        """Return {(dev, ino): {status, mtime, path}} for every indexed row in one query.
+
+        Lets the scanner skip re-parsing and re-upserting directories that haven't
+        changed since the last scan, instead of writing (and fsync-committing) every
+        row on every cycle regardless of whether anything moved.
+        """
+        rows = self._conn.execute("SELECT dev, ino, status, mtime, path FROM events").fetchall()
+        return {(r["dev"], r["ino"]): {"status": r["status"], "mtime": r["mtime"], "path": r["path"]} for r in rows}
+
     def get_event(self, event_id: int) -> dict | None:
         row = self._conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         return dict(row) if row is not None else None

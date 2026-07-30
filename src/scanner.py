@@ -65,6 +65,13 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
     write bumps the directory's own mtime, so it still goes through the normal
     settle_seconds wait afterward rather than settling in this same scan — same
     lifecycle as a tracker-written marker, just self-authored.
+
+    Directories already known 'local' or 'archived' at an unchanged path and mtime are
+    skipped entirely (no stat-derived work, no parse, no upsert/commit) rather than
+    redone every cycle — with a full filespace they vastly outnumber the directories
+    that are actually new or still settling, and re-upserting (and fsync-committing)
+    every one of them on every scan is what made scan time grow past the shutdown
+    grace period. A changed mtime or path (e.g. a rename) still forces reprocessing.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     now_ts = now.timestamp()
@@ -73,6 +80,8 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
     if not root.is_dir():
         logger.warning("Scan root does not exist: %s", root)
         return summary
+
+    known = index.get_known_states()
 
     for date_dir in root.iterdir():
         if not date_dir.is_dir() or not _DATE_DIR_RE.match(date_dir.name):
@@ -92,6 +101,17 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
                 continue
 
             summary["seen"] += 1
+
+            prior = known.get((st.st_dev, st.st_ino))
+            if (
+                prior is not None
+                and prior["status"] in ("local", "archived")
+                and prior["mtime"] == st.st_mtime
+                and prior["path"] == str(entry)
+            ):
+                summary["settled"] += 1
+                continue
+
             has_marker = (entry / _COMPLETE_MARKER_NAME).exists()
             if not has_marker:
                 restat = _maybe_declare_stale_complete(entry, st, now_ts)

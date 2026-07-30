@@ -120,6 +120,61 @@ def test_unsettled_then_settled_transition(tmp_path, idx):
     assert results[0]["status"] == "local"
 
 
+def test_rescan_of_unchanged_settled_dir_skips_upsert(tmp_path, idx, monkeypatch):
+    root = tmp_path / "filespace"
+    _make_event_dir(root, "20260724", "N123AB_landing_24_20260724_183304", mtime=time.time() - 1000)
+
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+    results, _ = idx.query_events()
+    assert results[0]["status"] == "local"
+
+    called = []
+    original = src.index.Index.upsert_event
+    monkeypatch.setattr(
+        src.index.Index, "upsert_event",
+        lambda self, *a, **k: called.append(1) or original(self, *a, **k),
+    )
+
+    summary = src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    assert summary == {"seen": 1, "settled": 1, "unsettled": 0}
+    assert called == []
+
+
+def test_rescan_of_unchanged_archived_dir_skips_upsert(tmp_path, idx, monkeypatch):
+    root = tmp_path / "filespace"
+    _make_event_dir(root, "20260724", "landing_24_20260724_183304", mtime=time.time() - 1000)
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+    results, _ = idx.query_events()
+    idx.set_archived(results[0]["id"], "/archive/whatever")
+
+    called = []
+    original = src.index.Index.upsert_event
+    monkeypatch.setattr(
+        src.index.Index, "upsert_event",
+        lambda self, *a, **k: called.append(1) or original(self, *a, **k),
+    )
+
+    summary = src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    assert summary == {"seen": 1, "settled": 1, "unsettled": 0}
+    assert called == []
+
+
+def test_rescan_reprocesses_settled_dir_when_mtime_changes(tmp_path, idx):
+    root = tmp_path / "filespace"
+    event_dir = _make_event_dir(root, "20260724", "landing_24_20260724_183304", mtime=time.time() - 1000)
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    new_mtime = time.time()
+    os.utime(event_dir, (new_mtime, new_mtime))
+    summary = src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    assert summary == {"seen": 1, "settled": 0, "unsettled": 1}
+    results, _ = idx.query_events()
+    assert results[0]["status"] == "indexing"
+
+
 def test_scan_never_downgrades_archived_status(tmp_path, idx):
     root = tmp_path / "filespace"
     event_dir = _make_event_dir(root, "20260724", "landing_24_20260724_183304", mtime=time.time() - 1000)
