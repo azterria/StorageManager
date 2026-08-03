@@ -197,10 +197,13 @@ def test_maintenance_cycle_delegates_to_archive_module(configured_env, monkeypat
     calls = []
 
     def fake_run_maintenance_cycle(
-        index, filespace_root, archive_root, age_days, disk_threshold_pct, batch_size, crf, debug_cleanup_days
+        index, filespace_root, archive_root, age_days, disk_threshold_pct, batch_size, crf,
+        debug_cleanup_days, tilt_calibration_cleanup_days,
     ):
         calls.append((filespace_root, archive_root))
-        return {"status": "ok", "processed": 3, "remaining": 7, "debug_cleaned": 2}
+        return {
+            "status": "ok", "processed": 3, "remaining": 7, "debug_cleaned": 2, "tilt_calibration_deleted": 1,
+        }
 
     monkeypatch.setattr(src.archive, "run_maintenance_cycle", fake_run_maintenance_cycle)
 
@@ -208,7 +211,10 @@ def test_maintenance_cycle_delegates_to_archive_module(configured_env, monkeypat
         first = client.post("/maintenance_cycle")
         second = client.post("/maintenance_cycle")
 
+    expected = {
+        "status": "ok", "processed": 3, "remaining": 7, "debug_cleaned": 2, "tilt_calibration_deleted": 1,
+    }
     assert first.status_code == 200
-    assert first.json() == {"status": "ok", "processed": 3, "remaining": 7, "debug_cleaned": 2}
-    assert second.json() == {"status": "ok", "processed": 3, "remaining": 7, "debug_cleaned": 2}
+    assert first.json() == expected
+    assert second.json() == expected
     assert len(calls) == 2

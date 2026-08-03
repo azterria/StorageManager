@@ -213,6 +213,22 @@ class Index:
         )
         self._conn.commit()
 
+    def local_events_by_type_older_than(self, event_type: str, cutoff_timestamp: str, limit: int) -> list[dict]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM events
+            WHERE status = 'local' AND event_type = ? AND timestamp IS NOT NULL AND timestamp < ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (event_type, cutoff_timestamp, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_event(self, event_id: int) -> None:
+        self._conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        self._conn.commit()
+
     def count_local_settled(self) -> int:
         return self._conn.execute(
             "SELECT COUNT(*) FROM events WHERE status = 'local'"

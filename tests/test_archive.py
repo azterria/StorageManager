@@ -154,6 +154,52 @@ def test_run_maintenance_cycle_cleans_debug_data_before_archive_age(tmp_path, id
     assert row["debug_cleaned"] == 1
 
 
+def _insert_tilt_calibration(idx, event_dir, date, time_):
+    parsed = src.parser.ParsedEvent(
+        registration=None, event="tilt_calibration", runway=None, date=date, time=time_, classified=True
+    )
+    return idx.upsert_event(
+        dev=1, ino=event_dir.stat().st_ino, path=str(event_dir), dir_name=event_dir.name,
+        parsed=parsed, mtime=1.0, status="local",
+    )
+
+
+def test_run_maintenance_cycle_deletes_old_tilt_calibration(tmp_path, idx):
+    filespace = tmp_path / "filespace"
+    old_date = "20200101"
+    event_dir = filespace / old_date / f"tilt_calibration_{old_date}_010203"
+    event_dir.mkdir(parents=True)
+    (event_dir / "debug.log").write_text("log line\n")
+    event_id = _insert_tilt_calibration(idx, event_dir, old_date, "010203")
+
+    result = src.archive.run_maintenance_cycle(
+        idx, filespace, tmp_path / "archive", age_days=30, disk_threshold_pct=99.9, batch_size=10,
+        tilt_calibration_cleanup_days=1,
+    )
+
+    assert result["tilt_calibration_deleted"] == 1
+    assert not event_dir.exists()
+    assert idx.get_event(event_id) is None
+
+
+def test_run_maintenance_cycle_keeps_recent_tilt_calibration(tmp_path, idx):
+    filespace = tmp_path / "filespace"
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S")
+    event_dir = filespace / today / f"tilt_calibration_{today}_{now_str}"
+    event_dir.mkdir(parents=True)
+    event_id = _insert_tilt_calibration(idx, event_dir, today, now_str)
+
+    result = src.archive.run_maintenance_cycle(
+        idx, filespace, tmp_path / "archive", age_days=30, disk_threshold_pct=99.9, batch_size=10,
+        tilt_calibration_cleanup_days=1,
+    )
+
+    assert result["tilt_calibration_deleted"] == 0
+    assert event_dir.exists()
+    assert idx.get_event(event_id) is not None
+
+
 def test_archive_event_missing_source_raises(tmp_path):
     row = {"id": 1, "path": str(tmp_path / "does_not_exist"), "date": "20200101", "dir_name": "x"}
     with pytest.raises(FileNotFoundError):
@@ -184,7 +230,9 @@ def test_run_maintenance_cycle_is_idempotent_on_empty_backlog(tmp_path, idx):
     result = src.archive.run_maintenance_cycle(
         idx, filespace, tmp_path / "archive", age_days=30, disk_threshold_pct=99.9, batch_size=10
     )
-    assert result == {"status": "ok", "processed": 0, "remaining": 0, "debug_cleaned": 0}
+    assert result == {
+        "status": "ok", "processed": 0, "remaining": 0, "debug_cleaned": 0, "tilt_calibration_deleted": 0,
+    }
 
 
 def test_run_maintenance_cycle_skips_failed_event_and_continues(tmp_path, idx):

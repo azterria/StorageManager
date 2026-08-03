@@ -79,6 +79,26 @@ def select_debug_cleanup_candidates(
     return index.local_events_for_debug_cleanup(cutoff, limit=batch_size)
 
 
+def select_tilt_calibration_deletion_candidates(
+    index: src.index.Index,
+    tilt_calibration_cleanup_days: float,
+    batch_size: int,
+) -> list[dict]:
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=tilt_calibration_cleanup_days)
+    ).isoformat(timespec="seconds")
+    return index.local_events_by_type_older_than("tilt_calibration", cutoff, limit=batch_size)
+
+
+def delete_tilt_calibration_event(row: dict) -> None:
+    """Remove a tilt_calibration event directory outright. Unlike archived event
+    types, calibration runs carry no data worth keeping past debug cleanup, so
+    they're deleted rather than routed through archive_event."""
+    event_dir = pathlib.Path(row["path"])
+    if event_dir.is_dir():
+        shutil.rmtree(event_dir)
+
+
 def _reencode(src_video: pathlib.Path, dest_video: pathlib.Path, crf: int) -> None:
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -143,6 +163,7 @@ def run_maintenance_cycle(
     batch_size: int,
     crf: int = DEFAULT_CRF,
     debug_cleanup_days: float | None = None,
+    tilt_calibration_cleanup_days: float | None = None,
 ) -> dict:
     """Process one bounded batch of archive candidates, plus (if enabled) a batch
     of debug cleanups on still-local events. Idempotent/resumable: a failure on
@@ -160,6 +181,22 @@ def run_maintenance_cycle(
             except Exception:
                 logger.exception("Failed to clean debug data for event id=%s path=%s", row["id"], row["path"])
 
+    tilt_calibration_deleted = 0
+    if tilt_calibration_cleanup_days is not None:
+        tilt_candidates = select_tilt_calibration_deletion_candidates(
+            index, tilt_calibration_cleanup_days, batch_size
+        )
+        logger.info("Tilt calibration cleanup starting: %d candidate(s)", len(tilt_candidates))
+        for row in tilt_candidates:
+            try:
+                delete_tilt_calibration_event(row)
+                index.delete_event(row["id"])
+                tilt_calibration_deleted += 1
+            except Exception:
+                logger.exception(
+                    "Failed to delete tilt_calibration event id=%s path=%s", row["id"], row["path"]
+                )
+
     candidates = select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size)
     logger.info("Maintenance cycle starting: %d candidate(s)", len(candidates))
 
@@ -176,7 +213,13 @@ def run_maintenance_cycle(
         select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size=1_000_000)
     )
     logger.info(
-        "Maintenance cycle complete: processed=%d remaining=%d debug_cleaned=%d",
-        processed, remaining, debug_cleaned,
+        "Maintenance cycle complete: processed=%d remaining=%d debug_cleaned=%d tilt_calibration_deleted=%d",
+        processed, remaining, debug_cleaned, tilt_calibration_deleted,
     )
-    return {"status": "ok", "processed": processed, "remaining": remaining, "debug_cleaned": debug_cleaned}
+    return {
+        "status": "ok",
+        "processed": processed,
+        "remaining": remaining,
+        "debug_cleaned": debug_cleaned,
+        "tilt_calibration_deleted": tilt_calibration_deleted,
+    }

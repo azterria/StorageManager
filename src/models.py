@@ -32,3 +32,4 @@ class MaintenanceCycleResponse(pydantic.BaseModel):
     processed: int
     remaining: int
     debug_cleaned: int
+    tilt_calibration_deleted: int
