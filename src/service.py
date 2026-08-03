@@ -302,4 +302,4 @@ def maintenance_cycle():
 
 
 if __name__ == "__main__":
-    uvicorn.run("src.service:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run("src.service:app", host="0.0.0.0", port=PORT, reload=False, log_config=None)
