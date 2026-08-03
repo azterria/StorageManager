@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS events (
     classified   INTEGER NOT NULL,
     status       TEXT NOT NULL DEFAULT 'indexing',
     archive_path TEXT,
+    debug_cleaned INTEGER NOT NULL DEFAULT 0,
     mtime        REAL NOT NULL,
     first_seen   TEXT NOT NULL,
     last_seen    TEXT NOT NULL,
@@ -53,8 +54,18 @@ class Index:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate_debug_cleaned_column()
         self._conn.commit()
         logger.info("Index opened at %s", db_path)
+
+    def _migrate_debug_cleaned_column(self) -> None:
+        """CREATE TABLE IF NOT EXISTS doesn't add columns to a pre-existing table,
+        so DBs created before debug_cleaned existed need it added explicitly."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(events)")}
+        if "debug_cleaned" not in columns:
+            self._conn.execute(
+                "ALTER TABLE events ADD COLUMN debug_cleaned INTEGER NOT NULL DEFAULT 0"
+            )
 
     def upsert_event(
         self,
@@ -182,6 +193,25 @@ class Index:
         ).fetchall()
         result = [dict(r) for r in rows if r["id"] not in exclude_ids]
         return result[:limit]
+
+    def local_events_for_debug_cleanup(self, cutoff_timestamp: str, limit: int) -> list[dict]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM events
+            WHERE status = 'local' AND debug_cleaned = 0
+                AND timestamp IS NOT NULL AND timestamp < ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (cutoff_timestamp, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_debug_cleaned(self, event_id: int) -> None:
+        self._conn.execute(
+            "UPDATE events SET debug_cleaned = 1 WHERE id = ?", (event_id,)
+        )
+        self._conn.commit()
 
     def count_local_settled(self) -> int:
         return self._conn.execute(

@@ -27,7 +27,7 @@ def _insert(idx, event_dir, date, time, status="local", registration="N123AB"):
     )
 
 
-def _make_event_with_video(base, date, name):
+def _make_event_with_video(base, date, name, with_debug_subfolders=False):
     event_dir = base / date / name
     event_dir.mkdir(parents=True)
     (event_dir / "detections.jsonl").write_text('{"frame": "cam_0", "boxes": [], "confidences": []}\n')
@@ -38,6 +38,14 @@ def _make_event_with_video(base, date, name):
     for _ in range(5):
         writer.write(numpy.zeros((24, 32, 3), dtype=numpy.uint8))
     writer.release()
+
+    if with_debug_subfolders:
+        (event_dir / "cam_1.jpg").write_bytes(b"jpg")
+        for subfolder in ("associators", "camera", "detector", "sanity", "search_frames"):
+            sub = event_dir / subfolder
+            sub.mkdir()
+            (sub / "frame_0.jpg").write_bytes(b"jpg")
+
     return event_dir
 
 
@@ -90,6 +98,62 @@ def test_archive_event_moves_and_reencodes(tmp_path):
     assert not event_dir.exists()
 
 
+def test_cleanup_debug_data_removes_only_debug_subfolders(tmp_path):
+    filespace = tmp_path / "filespace"
+    event_dir = _make_event_with_video(
+        filespace, "20200101", "old_landing_24_20200101_010203", with_debug_subfolders=True
+    )
+
+    src.archive.cleanup_debug_data(event_dir)
+
+    for subfolder in ("associators", "camera", "detector", "sanity", "search_frames"):
+        assert not (event_dir / subfolder).exists()
+    assert (event_dir / "cam_recording.mp4").exists()
+    assert (event_dir / "detections.jsonl").exists()
+    assert (event_dir / "debug.log").exists()
+    assert (event_dir / "cam_1.jpg").exists()
+
+
+def test_archive_event_skips_debug_subfolders(tmp_path):
+    filespace = tmp_path / "filespace"
+    archive_root = tmp_path / "archive"
+    event_dir = _make_event_with_video(
+        filespace, "20200101", "old_landing_24_20200101_010203", with_debug_subfolders=True
+    )
+    row = {"id": 1, "path": str(event_dir), "date": "20200101", "dir_name": event_dir.name}
+
+    dest = src.archive.archive_event(row, archive_root)
+
+    dest_path = tmp_path / "archive" / "20200101" / event_dir.name
+    assert dest == str(dest_path)
+    for subfolder in ("associators", "camera", "detector", "sanity", "search_frames"):
+        assert not (dest_path / subfolder).exists()
+    assert (dest_path / "cam_recording.mp4").exists()
+    assert (dest_path / "cam_1.jpg").exists()
+
+
+def test_run_maintenance_cycle_cleans_debug_data_before_archive_age(tmp_path, idx):
+    filespace = tmp_path / "filespace"
+    archive_root = tmp_path / "archive"
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    event_dir = _make_event_with_video(
+        filespace, today, f"recent_landing_24_{today}_010203", with_debug_subfolders=True
+    )
+    event_id = _insert(idx, event_dir, today, "010203")
+
+    result = src.archive.run_maintenance_cycle(
+        idx, filespace, archive_root, age_days=30, disk_threshold_pct=99.9, batch_size=10,
+        debug_cleanup_days=0,
+    )
+
+    assert result["debug_cleaned"] == 1
+    assert not (event_dir / "associators").exists()
+    assert event_dir.exists()
+    row = idx.get_event(event_id)
+    assert row["status"] == "local"
+    assert row["debug_cleaned"] == 1
+
+
 def test_archive_event_missing_source_raises(tmp_path):
     row = {"id": 1, "path": str(tmp_path / "does_not_exist"), "date": "20200101", "dir_name": "x"}
     with pytest.raises(FileNotFoundError):
@@ -120,7 +184,7 @@ def test_run_maintenance_cycle_is_idempotent_on_empty_backlog(tmp_path, idx):
     result = src.archive.run_maintenance_cycle(
         idx, filespace, tmp_path / "archive", age_days=30, disk_threshold_pct=99.9, batch_size=10
     )
-    assert result == {"status": "ok", "processed": 0, "remaining": 0}
+    assert result == {"status": "ok", "processed": 0, "remaining": 0, "debug_cleaned": 0}
 
 
 def test_run_maintenance_cycle_skips_failed_event_and_continues(tmp_path, idx):

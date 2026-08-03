@@ -56,6 +56,7 @@ Set via environment variables:
 | `ARCHIVE_DISK_THRESHOLD_PCT` | `85` | Disk usage that pulls forward older events |
 | `MAINTENANCE_BATCH_SIZE` | `20` | Max events per maintenance cycle |
 | `ARCHIVE_CRF` | `28` | ffmpeg CRF used when re-encoding |
+| `DEBUG_CLEANUP_DAYS` | `4` | Age threshold to strip a still-local event's debug subfolders |
 | `EVENT_SETTLE_SECONDS` | `120` | Quiet time before an event is considered settled |
 | `SCAN_INTERVAL_SECONDS` | `30` | Delay between periodic scans |
 

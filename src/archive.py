@@ -1,4 +1,5 @@
 import datetime
+import fnmatch
 import logging
 import pathlib
 import shutil
@@ -9,6 +10,34 @@ import src.index
 logger = logging.getLogger(__name__)
 
 DEFAULT_CRF = 28
+
+# Top-level event-directory entries worth keeping past debug cleanup and into the
+# archive: the recording, structured per-frame data, and small logs. Everything
+# else (the per-frame jpg dumps under associators/, camera/, detector/, sanity/,
+# search_frames/) is reconstructable from a fresh PlaneTracker run and is the
+# actual disk hog, so it's dropped rather than kept indefinitely.
+_DEBUG_KEEP_PATTERNS = (
+    "*_recording.mp4", "*.csv", "*.jsonl", "*.json", "debug.log", "atc.mp3",
+    "complete", "*.jpg",
+)
+
+
+def _keep_in_debug_cleanup(name: str) -> bool:
+    return any(fnmatch.fnmatch(name, pattern) for pattern in _DEBUG_KEEP_PATTERNS)
+
+
+def cleanup_debug_data(event_dir: pathlib.Path) -> None:
+    """Remove top-level entries of a local event directory that aren't in the
+    debug keep-list. Subdirectories of per-frame debug images (associators/,
+    camera/, detector/, sanity/, search_frames/) are the intended target; the
+    keep-list matches only files, so any subdirectory is removed unconditionally."""
+    for entry in event_dir.iterdir():
+        if _keep_in_debug_cleanup(entry.name):
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
 
 
 def _disk_pressure(filespace_root: pathlib.Path, threshold_pct: float) -> bool:
@@ -37,6 +66,17 @@ def select_candidates(
         candidates.extend(extra)
 
     return candidates
+
+
+def select_debug_cleanup_candidates(
+    index: src.index.Index,
+    debug_cleanup_days: float,
+    batch_size: int,
+) -> list[dict]:
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=debug_cleanup_days)
+    ).isoformat(timespec="seconds")
+    return index.local_events_for_debug_cleanup(cutoff, limit=batch_size)
 
 
 def _reencode(src_video: pathlib.Path, dest_video: pathlib.Path, crf: int) -> None:
@@ -71,6 +111,11 @@ def archive_event(row: dict, archive_root: pathlib.Path, crf: int = DEFAULT_CRF)
     for entry in src_dir.iterdir():
         if entry.name in video_names:
             continue
+        # Debug-only subdirectories (associators/, camera/, detector/, sanity/,
+        # search_frames/) never belong in the archive, whether or not
+        # cleanup_debug_data has already run on this event.
+        if not _keep_in_debug_cleanup(entry.name):
+            continue
         if entry.is_dir():
             shutil.copytree(entry, tmp_dest / entry.name)
         else:
@@ -97,10 +142,24 @@ def run_maintenance_cycle(
     disk_threshold_pct: float,
     batch_size: int,
     crf: int = DEFAULT_CRF,
+    debug_cleanup_days: float | None = None,
 ) -> dict:
-    """Process one bounded batch of archive candidates. Idempotent/resumable: a
-    failure on one event is logged and skipped, leaving it eligible for the next
-    call rather than aborting the whole batch."""
+    """Process one bounded batch of archive candidates, plus (if enabled) a batch
+    of debug cleanups on still-local events. Idempotent/resumable: a failure on
+    one event is logged and skipped, leaving it eligible for the next call rather
+    than aborting the whole batch."""
+    debug_cleaned = 0
+    if debug_cleanup_days is not None:
+        debug_candidates = select_debug_cleanup_candidates(index, debug_cleanup_days, batch_size)
+        logger.info("Debug cleanup starting: %d candidate(s)", len(debug_candidates))
+        for row in debug_candidates:
+            try:
+                cleanup_debug_data(pathlib.Path(row["path"]))
+                index.set_debug_cleaned(row["id"])
+                debug_cleaned += 1
+            except Exception:
+                logger.exception("Failed to clean debug data for event id=%s path=%s", row["id"], row["path"])
+
     candidates = select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size)
     logger.info("Maintenance cycle starting: %d candidate(s)", len(candidates))
 
@@ -117,6 +176,7 @@ def run_maintenance_cycle(
         select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size=1_000_000)
     )
     logger.info(
-        "Maintenance cycle complete: processed=%d remaining=%d", processed, remaining
+        "Maintenance cycle complete: processed=%d remaining=%d debug_cleaned=%d",
+        processed, remaining, debug_cleaned,
     )
-    return {"status": "ok", "processed": processed, "remaining": remaining}
+    return {"status": "ok", "processed": processed, "remaining": remaining, "debug_cleaned": debug_cleaned}

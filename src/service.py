@@ -34,6 +34,7 @@ _archive_age_days: float
 _archive_disk_threshold_pct: float
 _maintenance_batch_size: int
 _archive_crf: int
+_debug_cleanup_days: float
 _thumbnail_cache_dir: pathlib.Path
 
 
@@ -41,7 +42,7 @@ def _load_config() -> None:
     """Read env-based config fresh at startup (rather than at import time) so tests
     can point each run at its own tmp_path fixtures via monkeypatched env vars."""
     global _filespace_root, _archive_root, _archive_age_days, _archive_disk_threshold_pct
-    global _maintenance_batch_size, _archive_crf, _thumbnail_cache_dir
+    global _maintenance_batch_size, _archive_crf, _debug_cleanup_days, _thumbnail_cache_dir
 
     _filespace_root = pathlib.Path(os.environ["FILESPACE_ROOT"])
     _archive_root = pathlib.Path(os.environ["ARCHIVE_ROOT"])
@@ -49,6 +50,7 @@ def _load_config() -> None:
     _archive_disk_threshold_pct = float(os.getenv("ARCHIVE_DISK_THRESHOLD_PCT", "85"))
     _maintenance_batch_size = int(os.getenv("MAINTENANCE_BATCH_SIZE", "20"))
     _archive_crf = int(os.getenv("ARCHIVE_CRF", str(src.archive.DEFAULT_CRF)))
+    _debug_cleanup_days = float(os.getenv("DEBUG_CLEANUP_DAYS", "4"))
 
     index_db_path = pathlib.Path(os.getenv("INDEX_DB_PATH", "data/index/storage_manager.db"))
     _thumbnail_cache_dir = index_db_path.parent / "thumbnails"
@@ -290,6 +292,7 @@ def maintenance_cycle():
         _archive_disk_threshold_pct,
         _maintenance_batch_size,
         _archive_crf,
+        _debug_cleanup_days,
     )
     return src.models.MaintenanceCycleResponse(**result)
 

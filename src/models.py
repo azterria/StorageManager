@@ -31,3 +31,4 @@ class MaintenanceCycleResponse(pydantic.BaseModel):
     status: str
     processed: int
     remaining: int
+    debug_cleaned: int
