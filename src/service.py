@@ -264,7 +264,12 @@ def get_video(event_id: int):
     if not candidates:
         logger.warning("No recording available for event id=%s", event_id)
         raise fastapi.HTTPException(404, "No recording available for this event")
-    return fastapi.responses.FileResponse(candidates[0], media_type="video/mp4")
+    return fastapi.responses.FileResponse(
+        candidates[0],
+        media_type="video/mp4",
+        filename=candidates[0].name,
+        content_disposition_type="attachment",
+    )
 
 
 @app.get("/events/{event_id}/thumbnail")
@@ -281,7 +286,12 @@ def get_thumbnail(event_id: int):
     except RuntimeError as exc:
         logger.exception("Thumbnail generation failed for event id=%s", event_id)
         raise fastapi.HTTPException(500, str(exc)) from exc
-    return fastapi.responses.FileResponse(thumbnail_path, media_type="image/jpeg")
+    return fastapi.responses.FileResponse(
+        thumbnail_path,
+        media_type="image/jpeg",
+        filename=f"{event_id}.jpg",
+        content_disposition_type="attachment",
+    )
 
 
 @app.post("/maintenance_cycle", response_model=src.models.MaintenanceCycleResponse)
