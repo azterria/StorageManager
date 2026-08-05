@@ -193,6 +193,115 @@ def test_video_404_when_no_recording(configured_env):
         assert resp.status_code == 404
 
 
+def test_rename_local_event_updates_registration_and_directory(configured_env):
+    filespace = configured_env["filespace"]
+    _make_event_dir(filespace, "20260724", "705_landing_24_20260724_183304", time.time() - 1000)
+
+    with TestClient(src.service.app) as client:
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "N72705", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "renamed"
+        assert body["event"]["registration"] == "N72705"
+
+        events = client.get("/events").json()["events"]
+        assert events[0]["registration"] == "N72705"
+
+    assert not (filespace / "20260724" / "705_landing_24_20260724_183304").exists()
+    assert (filespace / "20260724" / "N72705_landing_24_20260724_183304").is_dir()
+
+
+def test_rename_indexing_event_is_queued_not_applied(configured_env, monkeypatch):
+    monkeypatch.setenv("EVENT_SETTLE_SECONDS", "3600")
+    filespace = configured_env["filespace"]
+    _make_event_dir(filespace, "20260724", "705_landing_24_20260724_183304", time.time())
+
+    with TestClient(src.service.app) as client:
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "N72705", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "queued"
+        assert body["event"]["registration"] == "705"
+
+    assert (filespace / "20260724" / "705_landing_24_20260724_183304").exists()
+
+
+def test_rename_archived_event_rejected(configured_env, monkeypatch):
+    monkeypatch.setenv("ARCHIVE_AGE_DAYS", "0")
+    filespace = configured_env["filespace"]
+    _make_event_dir(filespace, "20260724", "705_landing_24_20260724_183304", time.time() - 1000)
+
+    with TestClient(src.service.app) as client:
+        maintenance = client.post("/maintenance_cycle")
+        assert maintenance.json()["processed"] == 1
+
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "N72705", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 400
+
+
+def test_rename_no_match_returns_404(configured_env):
+    with TestClient(src.service.app) as client:
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "N72705", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 404
+
+
+def test_rename_ambiguous_match_returns_409(configured_env):
+    # Two directories with the same event/runway/date/time but different registration
+    # prefixes — a real collision the parser can legitimately produce (e.g. a stray
+    # duplicate track), which /rename must refuse to guess between.
+    filespace = configured_env["filespace"]
+    _make_event_dir(filespace, "20260724", "705_landing_24_20260724_183304", time.time() - 1000)
+    _make_event_dir(filespace, "20260724", "706_landing_24_20260724_183304", time.time() - 1000)
+
+    with TestClient(src.service.app) as client:
+        assert len(client.get("/events").json()["events"]) == 2
+
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "N72705", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 409
+
+
+def test_rename_invalid_registration_returns_400(configured_env):
+    with TestClient(src.service.app) as client:
+        resp = client.post(
+            "/rename",
+            json={
+                "registration": "bad reg!", "event": "landing", "runway": "24",
+                "date": "20260724", "time": "183304",
+            },
+        )
+        assert resp.status_code == 400
+
+
 def test_maintenance_cycle_delegates_to_archive_module(configured_env, monkeypatch):
     calls = []
 

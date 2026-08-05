@@ -7,6 +7,7 @@ import re
 
 import src.index
 import src.parser
+import src.rename
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
     that are actually new or still settling, and re-upserting (and fsync-committing)
     every one of them on every scan is what made scan time grow past the shutdown
     grace period. A changed mtime or path (e.g. a rename) still forces reprocessing.
+
+    Also applies any /rename requests that were queued while their event was still
+    'indexing' (see rename.apply_pending_renames), once this pass has settled them to
+    'local'.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     now_ts = now.timestamp()
@@ -132,6 +137,8 @@ def scan_once(root: pathlib.Path, index: src.index.Index, settle_seconds: float)
                 status="local" if is_settled else "indexing",
                 now=now,
             )
+
+    src.rename.apply_pending_renames(index)
 
     index.set_meta("last_scan_time", now.isoformat())
     return summary

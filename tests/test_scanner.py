@@ -175,6 +175,32 @@ def test_rescan_reprocesses_settled_dir_when_mtime_changes(tmp_path, idx):
     assert results[0]["status"] == "indexing"
 
 
+def test_scan_applies_pending_rename_once_event_settles(tmp_path, idx):
+    root = tmp_path / "filespace"
+    event_dir = _make_event_dir(root, "20260724", "705_landing_24_20260724_183304", mtime=time.time())
+
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+    results, _ = idx.query_events()
+    event_id = results[0]["id"]
+    assert results[0]["status"] == "indexing"
+
+    idx.queue_rename(event_id, "N72705")
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+    assert event_dir.exists()  # still indexing: rename not applied yet
+    assert idx.get_event(event_id)["registration"] == "705"
+
+    old_mtime = time.time() - 1000
+    os.utime(event_dir, (old_mtime, old_mtime))
+    src.scanner.scan_once(root, idx, settle_seconds=120)
+
+    row = idx.get_event(event_id)
+    assert row["status"] == "local"
+    assert row["registration"] == "N72705"
+    assert row["dir_name"] == "N72705_landing_24_20260724_183304"
+    assert not event_dir.exists()
+    assert (root / "20260724" / "N72705_landing_24_20260724_183304").is_dir()
+
+
 def test_scan_never_downgrades_archived_status(tmp_path, idx):
     root = tmp_path / "filespace"
     event_dir = _make_event_dir(root, "20260724", "landing_24_20260724_183304", mtime=time.time() - 1000)

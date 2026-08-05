@@ -14,6 +14,7 @@ import src.archive
 import src.index
 import src.logging_config
 import src.models
+import src.rename
 import src.scanner
 import src.thumbnail
 
@@ -292,6 +293,52 @@ def get_thumbnail(event_id: int):
         filename=f"{event_id}.jpg",
         content_disposition_type="attachment",
     )
+
+
+@app.post("/rename", response_model=src.models.RenameResponse)
+def rename_event(request: src.models.RenameRequest):
+    """Correct an event's registration, identified by event/runway/date/time rather
+    than its current (possibly wrong or partial) registration.
+
+    'archived' events are rejected outright — renaming a directory that's already
+    been moved into ARCHIVE_ROOT is out of scope, matching the rest of this service's
+    treatment of archiving as one-way. 'indexing' events are queued rather than
+    renamed immediately, since the tracker may still be writing into that directory
+    under its current path; the rename is applied automatically once the event
+    settles to 'local' (see rename.apply_pending_renames, called from scan_once).
+    """
+    try:
+        src.rename.validate_rename_request(
+            request.registration, request.event, request.runway, request.date, request.time
+        )
+    except src.rename.RenameError as exc:
+        raise fastapi.HTTPException(400, str(exc)) from exc
+
+    matches = _index.find_events_by_identity(request.event, request.runway, request.date, request.time)
+    if not matches:
+        raise fastapi.HTTPException(404, "No event found matching event/runway/date/time")
+    if len(matches) > 1:
+        raise fastapi.HTTPException(
+            409, f"Ambiguous: {len(matches)} events match event/runway/date/time"
+        )
+
+    row = matches[0]
+    if row["status"] == "archived":
+        raise fastapi.HTTPException(400, "Cannot rename an archived event")
+
+    if row["status"] == "indexing":
+        _index.queue_rename(row["id"], request.registration)
+        return src.models.RenameResponse(status="queued", event=_row_to_summary(_index.get_event(row["id"])))
+
+    try:
+        updated = src.rename.apply_rename(_index, row, request.registration)
+    except src.rename.RenameError as exc:
+        raise fastapi.HTTPException(409, str(exc)) from exc
+    except OSError as exc:
+        logger.exception("Rename failed for event id=%s", row["id"])
+        raise fastapi.HTTPException(500, f"Rename failed: {exc}") from exc
+
+    return src.models.RenameResponse(status="renamed", event=_row_to_summary(updated))
 
 
 @app.post("/maintenance_cycle", response_model=src.models.MaintenanceCycleResponse)

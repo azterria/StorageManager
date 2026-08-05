@@ -8,6 +8,32 @@ unusually good about explaining *why* (dev/ino keying, non-cancelling
 shutdown, archived-never-downgrades, atomic archive move) — if I add code,
 match that style rather than leaving the reasoning implicit.
 
+## Resolved (2026-08-05)
+
+- **No locking around the shared SQLite connection.** Previously deliberately left
+  alone (deployments are single-consumer, idle ~90% of the time) — accepted only up
+  to the point a second concurrent writer showed up per deployment. That happened
+  when `/rename` was added: its handler runs in a request-thread-pool thread and
+  can write to the index at the same time the
+  periodic scan thread does, on the same `sqlite3.Connection`. This wasn't
+  hypothetical; it reproduced immediately in tests (`cannot commit - no transaction
+  is active`). Fixed by wrapping every `Index` method body in a `threading.Lock`
+  (`Index._lock`, see `index.py`), since `check_same_thread=False` disables the
+  same-thread check but adds no actual synchronization. If another concurrent
+  writer path is added later, no further locking work should be needed — it's
+  already whole-connection, not per-method.
+
+- **No way to correct an event's registration after the fact.** `/rename` matches
+  an event by `event`/`runway`/`date`/`time` (deliberately not by registration, since
+  a wrong/partial registration is exactly what it's correcting) and updates
+  `registration` in place, physically renaming the event directory to match.
+  Renaming an `indexing` event is deferred rather than
+  done immediately — the tracker may still hold that directory open by path — so the
+  request is queued in a `pending_renames` table and applied once the event settles
+  to `local` (`rename.apply_pending_renames`, called at the end of every
+  `scanner.scan_once`). `archived` events are rejected outright, consistent with
+  archiving being treated as one-way everywhere else in this service.
+
 ## Resolved (2026-07-30)
 
 - **Timestampless events (`runway_test`, `calibration`, `stream_reconnect`,
@@ -18,12 +44,6 @@ match that style rather than leaving the reasoning implicit.
   `unclassified_count` (see `Index.count_unclassified`) so an unexpected
   buildup is visible instead of silent. If this count is ever nonzero and
   growing, that's the signal something upstream changed.
-
-- **No locking around the shared SQLite connection.** Deliberately left
-  alone: deployments are single-consumer and idle ~90% of the time, so the
-  actual risk of concurrent writes colliding is low. Revisit only if a
-  second consumer is ever added per deployment, or if `/maintenance_cycle`
-  starts being called on a tight schedule.
 
 - **Directory mtime settling assumed new entries, not just data writes.**
   Confirmed: PlaneTracker writes `*_recording.mp4` last, as a re-encode of

@@ -123,6 +123,46 @@ def test_count_unclassified(idx):
     assert idx.count_unclassified() == 1
 
 
+def test_find_events_by_identity(idx):
+    idx.upsert_event(dev=1, ino=1, path="/a", dir_name="a", parsed=_parsed(registration="705"), mtime=1.0, status="local")
+    idx.upsert_event(dev=1, ino=2, path="/b", dir_name="b", parsed=_parsed(registration="N999ZZ", runway="06"), mtime=1.0, status="local")
+
+    matches = idx.find_events_by_identity("landing", "24", "20260724", "183304")
+    assert len(matches) == 1
+    assert matches[0]["registration"] == "705"
+
+    assert idx.find_events_by_identity("takeoff", "24", "20260724", "183304") == []
+
+
+def test_rename_event_updates_registration_path_and_dir_name(idx):
+    event_id = idx.upsert_event(
+        dev=1, ino=1, path="/root/20260724/705_landing_24_20260724_183304",
+        dir_name="705_landing_24_20260724_183304", parsed=_parsed(registration="705"), mtime=1.0, status="local",
+    )
+    idx.rename_event(
+        event_id, "N72705",
+        "N72705_landing_24_20260724_183304", "/root/20260724/N72705_landing_24_20260724_183304",
+    )
+    row = idx.get_event(event_id)
+    assert row["registration"] == "N72705"
+    assert row["dir_name"] == "N72705_landing_24_20260724_183304"
+    assert row["path"] == "/root/20260724/N72705_landing_24_20260724_183304"
+
+
+def test_queue_rename_upserts_and_only_surfaces_for_local_events(idx):
+    indexing_id = idx.upsert_event(dev=1, ino=1, path="/a", dir_name="a", parsed=_parsed(registration="705"), mtime=1.0, status="indexing")
+    local_id = idx.upsert_event(dev=1, ino=2, path="/b", dir_name="b", parsed=_parsed(registration="706"), mtime=1.0, status="local")
+
+    idx.queue_rename(indexing_id, "N72705")
+    idx.queue_rename(local_id, "N72706")
+    assert idx.get_pending_renames_for_local_events() == [{"event_id": local_id, "new_registration": "N72706"}]
+
+    idx.queue_rename(indexing_id, "N72705X")  # overwrite, not stack
+    idx.clear_pending_rename(local_id)
+    idx.upsert_event(dev=1, ino=1, path="/a", dir_name="a", parsed=_parsed(registration="705"), mtime=1.0, status="local")
+    assert idx.get_pending_renames_for_local_events() == [{"event_id": indexing_id, "new_registration": "N72705X"}]
+
+
 def test_meta_roundtrip(idx):
     assert idx.get_meta("last_scan_time") is None
     idx.set_meta("last_scan_time", "2026-07-29T00:00:00+00:00")

@@ -33,3 +33,16 @@ class MaintenanceCycleResponse(pydantic.BaseModel):
     remaining: int
     debug_cleaned: int
     tilt_calibration_deleted: int
+
+
+class RenameRequest(pydantic.BaseModel):
+    registration: str
+    event: str
+    runway: str
+    date: str
+    time: str
+
+
+class RenameResponse(pydantic.BaseModel):
+    status: str
+    event: EventSummary
