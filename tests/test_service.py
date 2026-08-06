@@ -55,6 +55,41 @@ def test_status_reports_unclassified_count(configured_env):
         assert body["unclassified_count"] == 1
 
 
+def test_status_reports_failed_count(configured_env):
+    filespace = configured_env["filespace"]
+    now = time.time()
+    _make_event_dir(filespace, "20260101", "N123AB_landing_24_20260101_010203", now - 1000)
+
+    with TestClient(src.service.app) as client:
+        client.get("/status")  # let startup scan index the event before we mark it failed
+        event_id = src.service._index.query_events()[0][0]["id"]
+        src.service._index.set_failed(event_id, "archive")
+
+        body = client.get("/status").json()
+        assert body["failed_count"] == 1
+
+
+def test_failed_jobs_endpoint(configured_env):
+    filespace = configured_env["filespace"]
+    now = time.time()
+    _make_event_dir(filespace, "20260101", "N123AB_landing_24_20260101_010203", now - 1000)
+
+    with TestClient(src.service.app) as client:
+        client.get("/status")
+        empty = client.get("/failed_jobs")
+        assert empty.status_code == 200
+        assert empty.text == "No failed jobs.\n"
+
+        event_id = src.service._index.query_events()[0][0]["id"]
+        src.service._index.set_failed(event_id, "archive")
+
+        response = client.get("/failed_jobs")
+        assert response.status_code == 200
+        assert f"id={event_id}" in response.text
+        assert "stage=archive" in response.text
+        assert "registration=N123AB" in response.text
+
+
 def test_events_filtering_by_registration_and_time_window(configured_env):
     filespace = configured_env["filespace"]
     now = time.time()

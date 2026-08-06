@@ -165,7 +165,7 @@ def status(response: fastapi.Response):
         response.status_code = 503
         return src.models.StatusResponse(
             status="starting", index_size=0, last_scan_time=None, archive_backlog=0,
-            unclassified_count=0,
+            unclassified_count=0, failed_count=0,
         )
     counts = _index.count_by_status()
     return src.models.StatusResponse(
@@ -174,7 +174,24 @@ def status(response: fastapi.Response):
         last_scan_time=_index.get_meta("last_scan_time"),
         archive_backlog=counts.get("local", 0),
         unclassified_count=_index.count_unclassified(),
+        failed_count=counts.get("failed", 0),
     )
+
+
+@app.get("/failed_jobs", response_class=fastapi.responses.PlainTextResponse)
+def failed_jobs():
+    """Enumerate permanently-failed maintenance jobs in plain text, one per line.
+    Kept minimal (no error message/traceback) per the failure-marking design in
+    docs/training_crop_archive_plan.md."""
+    rows = _index.list_failed()
+    if not rows:
+        return "No failed jobs.\n"
+    lines = [
+        f"id={row['id']} stage={row['failure_stage']} registration={row['registration']} "
+        f"event={row['event_type']} last_seen={row['last_seen']} path={row['path']}"
+        for row in rows
+    ]
+    return "\n".join(lines) + "\n"
 
 
 _TIME_FIELDS = ("year", "month", "day", "hour", "minute", "second")

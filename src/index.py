@@ -365,6 +365,13 @@ class Index:
             )
             self._conn.commit()
 
+    def list_failed(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events WHERE status = 'failed' ORDER BY last_seen DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_meta(self, key: str) -> str | None:
         with self._lock:
             row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
