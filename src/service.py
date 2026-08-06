@@ -37,6 +37,9 @@ _maintenance_batch_size: int
 _archive_crf: int
 _debug_cleanup_days: float
 _tilt_calibration_cleanup_days: float
+_archive_crop_width: int
+_archive_crop_height: int
+_archive_training_clip_fps: int
 _thumbnail_cache_dir: pathlib.Path
 
 
@@ -45,6 +48,7 @@ def _load_config() -> None:
     can point each run at its own tmp_path fixtures via monkeypatched env vars."""
     global _filespace_root, _archive_root, _archive_age_days, _archive_disk_threshold_pct
     global _maintenance_batch_size, _archive_crf, _debug_cleanup_days, _tilt_calibration_cleanup_days
+    global _archive_crop_width, _archive_crop_height, _archive_training_clip_fps
     global _thumbnail_cache_dir
 
     _filespace_root = pathlib.Path(os.environ["FILESPACE_ROOT"])
@@ -55,6 +59,11 @@ def _load_config() -> None:
     _archive_crf = int(os.getenv("ARCHIVE_CRF", str(src.archive.DEFAULT_CRF)))
     _debug_cleanup_days = float(os.getenv("DEBUG_CLEANUP_DAYS", "4"))
     _tilt_calibration_cleanup_days = float(os.getenv("TILT_CALIBRATION_CLEANUP_DAYS", "1"))
+    _archive_crop_width = int(os.getenv("ARCHIVE_CROP_WIDTH", str(src.archive.DEFAULT_CROP_WIDTH)))
+    _archive_crop_height = int(os.getenv("ARCHIVE_CROP_HEIGHT", str(src.archive.DEFAULT_CROP_HEIGHT)))
+    _archive_training_clip_fps = int(
+        os.getenv("ARCHIVE_TRAINING_CLIP_FPS", str(src.archive.DEFAULT_TRAINING_CLIP_FPS))
+    )
 
     index_db_path = pathlib.Path(os.getenv("INDEX_DB_PATH", "data/index/storage_manager.db"))
     _thumbnail_cache_dir = index_db_path.parent / "thumbnails"
@@ -354,6 +363,9 @@ def maintenance_cycle():
         _archive_crf,
         _debug_cleanup_days,
         _tilt_calibration_cleanup_days,
+        _archive_crop_width,
+        _archive_crop_height,
+        _archive_training_clip_fps,
     )
     return src.models.MaintenanceCycleResponse(**result)
 

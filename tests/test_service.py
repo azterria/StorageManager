@@ -307,7 +307,7 @@ def test_maintenance_cycle_delegates_to_archive_module(configured_env, monkeypat
 
     def fake_run_maintenance_cycle(
         index, filespace_root, archive_root, age_days, disk_threshold_pct, batch_size, crf,
-        debug_cleanup_days, tilt_calibration_cleanup_days,
+        debug_cleanup_days, tilt_calibration_cleanup_days, crop_w, crop_h, training_clip_fps,
     ):
         calls.append((filespace_root, archive_root))
         return {
