@@ -254,4 +254,29 @@ def test_run_maintenance_cycle_skips_failed_event_and_continues(tmp_path, idx):
 
     assert result["processed"] == 1
     assert idx.get_event(good_id)["status"] == "archived"
-    assert idx.get_event(bad_id)["status"] == "local"
+    bad_row = idx.get_event(bad_id)
+    assert bad_row["status"] == "failed"
+    assert bad_row["failure_stage"] == "archive"
+
+
+def test_run_maintenance_cycle_marks_debug_cleanup_failure(tmp_path, idx, monkeypatch):
+    filespace = tmp_path / "filespace"
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    event_dir = _make_event_with_video(filespace, today, f"recent_landing_24_{today}_010203")
+    event_id = _insert(idx, event_dir, today, "010203")
+
+    def _boom(_event_dir):
+        raise OSError("simulated cleanup failure")
+
+    monkeypatch.setattr(src.archive, "cleanup_debug_data", _boom)
+
+    result = src.archive.run_maintenance_cycle(
+        idx, filespace, tmp_path / "archive", age_days=30, disk_threshold_pct=99.9, batch_size=10,
+        debug_cleanup_days=0,
+    )
+
+    assert result["debug_cleaned"] == 0
+    row = idx.get_event(event_id)
+    assert row["status"] == "failed"
+    assert row["failure_stage"] == "debug_cleanup"
+    assert (event_dir / "failed_debug_cleanup").exists()

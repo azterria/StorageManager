@@ -112,6 +112,20 @@ def _reencode(src_video: pathlib.Path, dest_video: pathlib.Path, crf: int) -> No
         raise RuntimeError(f"ffmpeg re-encode failed (rc={result.returncode}): {result.stderr.strip()}")
 
 
+def _mark_failed(index: src.index.Index, row: dict, stage: str) -> None:
+    """Stop a permanently-failing event from being retried every maintenance cycle:
+    write an on-disk marker (mirrors the `complete` marker convention) and set
+    status='failed' in the index, which upsert_event treats as sticky like
+    'archived'. Recovery is manual."""
+    marker_name = "failed_archive" if stage == "archive" else "failed_debug_cleanup"
+    event_dir = pathlib.Path(row["path"])
+    try:
+        (event_dir / marker_name).touch()
+    except OSError:
+        logger.warning("Could not write %s marker in %s", marker_name, event_dir)
+    index.set_failed(row["id"], stage)
+
+
 def archive_event(row: dict, archive_root: pathlib.Path, crf: int = DEFAULT_CRF) -> str:
     """Reduce and move one event directory into the archive, atomically from the
     index's point of view: the local original is only removed after the fully
@@ -166,9 +180,10 @@ def run_maintenance_cycle(
     tilt_calibration_cleanup_days: float | None = None,
 ) -> dict:
     """Process one bounded batch of archive candidates, plus (if enabled) a batch
-    of debug cleanups on still-local events. Idempotent/resumable: a failure on
-    one event is logged and skipped, leaving it eligible for the next call rather
-    than aborting the whole batch."""
+    of debug cleanups on still-local events. Idempotent/resumable in the sense that
+    a failure on one event doesn't abort the whole batch — but the event itself is
+    marked 'failed' (see _mark_failed) rather than left for automatic retry, since a
+    permanent failure (bad data) would otherwise just fail again every cycle."""
     debug_cleaned = 0
     if debug_cleanup_days is not None:
         debug_candidates = select_debug_cleanup_candidates(index, debug_cleanup_days, batch_size)
@@ -178,8 +193,12 @@ def run_maintenance_cycle(
                 cleanup_debug_data(pathlib.Path(row["path"]))
                 index.set_debug_cleaned(row["id"])
                 debug_cleaned += 1
-            except Exception:
-                logger.exception("Failed to clean debug data for event id=%s path=%s", row["id"], row["path"])
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clean debug data for event id=%s path=%s: %s",
+                    row["id"], row["path"], exc, exc_info=True,
+                )
+                _mark_failed(index, row, "debug_cleanup")
 
     tilt_calibration_deleted = 0
     if tilt_calibration_cleanup_days is not None:
@@ -206,8 +225,11 @@ def run_maintenance_cycle(
             archive_path = archive_event(row, archive_root, crf)
             index.set_archived(row["id"], archive_path)
             processed += 1
-        except Exception:
-            logger.exception("Failed to archive event id=%s path=%s", row["id"], row["path"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to archive event id=%s path=%s: %s", row["id"], row["path"], exc, exc_info=True
+            )
+            _mark_failed(index, row, "archive")
 
     remaining = len(
         select_candidates(index, age_days, disk_threshold_pct, filespace_root, batch_size=1_000_000)

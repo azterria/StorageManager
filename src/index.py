@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS events (
     status       TEXT NOT NULL DEFAULT 'indexing',
     archive_path TEXT,
     debug_cleaned INTEGER NOT NULL DEFAULT 0,
+    failure_stage TEXT,
     mtime        REAL NOT NULL,
     first_seen   TEXT NOT NULL,
     last_seen    TEXT NOT NULL,
@@ -72,6 +73,7 @@ class Index:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._migrate_debug_cleaned_column()
+        self._migrate_failure_stage_column()
         self._conn.commit()
         logger.info("Index opened at %s", db_path)
 
@@ -86,6 +88,12 @@ class Index:
                 "ALTER TABLE events ADD COLUMN debug_cleaned INTEGER NOT NULL DEFAULT 0"
             )
 
+    def _migrate_failure_stage_column(self) -> None:
+        """Same rationale as _migrate_debug_cleaned_column, for failure_stage."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(events)")}
+        if "failure_stage" not in columns:
+            self._conn.execute("ALTER TABLE events ADD COLUMN failure_stage TEXT")
+
     def upsert_event(
         self,
         dev: int,
@@ -97,7 +105,11 @@ class Index:
         status: str,
         now: datetime.datetime | None = None,
     ) -> int:
-        """Insert or update the row for (dev, ino). Never downgrades an 'archived' row."""
+        """Insert or update the row for (dev, ino). Never downgrades an 'archived' or
+        'failed' row — a 'failed' event's directory is left untouched on disk, so
+        without this the next scan would see what still looks like a plain local/
+        indexing directory and silently flip status back, undoing the failure mark
+        and re-queuing the event for another doomed attempt next cycle."""
         now_iso = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat()
         timestamp = _to_timestamp(parsed.date, parsed.time)
         with self._lock:
@@ -123,7 +135,7 @@ class Index:
                 return cur.lastrowid
 
             row_id = existing["id"]
-            new_status = existing["status"] if existing["status"] == "archived" else status
+            new_status = existing["status"] if existing["status"] in ("archived", "failed") else status
             self._conn.execute(
                 """
                 UPDATE events SET
@@ -338,6 +350,18 @@ class Index:
             self._conn.execute(
                 "UPDATE events SET status = 'archived', archive_path = ?, last_seen = ? WHERE id = ?",
                 (archive_path, now_iso, event_id),
+            )
+            self._conn.commit()
+
+    def set_failed(self, event_id: int, stage: str, now: datetime.datetime | None = None) -> None:
+        """Mark an event as permanently failed at a given maintenance stage ('archive'
+        or 'debug_cleanup'). Sticky like 'archived' (see upsert_event) — recovery is
+        manual."""
+        now_iso = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE events SET status = 'failed', failure_stage = ?, last_seen = ? WHERE id = ?",
+                (stage, now_iso, event_id),
             )
             self._conn.commit()
 

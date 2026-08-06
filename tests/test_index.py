@@ -61,6 +61,19 @@ def test_upsert_never_downgrades_archived(idx):
     assert row["archive_path"] == "/archive/x"
 
 
+def test_upsert_never_downgrades_failed(idx):
+    event_id = idx.upsert_event(
+        dev=1, ino=100, path="/root/x", dir_name="x", parsed=_parsed(), mtime=1.0, status="local",
+    )
+    idx.set_failed(event_id, "archive")
+    idx.upsert_event(
+        dev=1, ino=100, path="/root/x", dir_name="x", parsed=_parsed(), mtime=3.0, status="local",
+    )
+    row = idx.get_event(event_id)
+    assert row["status"] == "failed"
+    assert row["failure_stage"] == "archive"
+
+
 def test_query_by_registration_prefix(idx):
     idx.upsert_event(dev=1, ino=1, path="/a", dir_name="a", parsed=_parsed(registration="N123AB"), mtime=1.0, status="local")
     idx.upsert_event(dev=1, ino=2, path="/b", dir_name="b", parsed=_parsed(registration="N999ZZ"), mtime=1.0, status="local")
